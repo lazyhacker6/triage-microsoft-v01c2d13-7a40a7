@@ -1,0 +1,42 @@
+# Baseline harness for validation of "Mu QEMU PR Validation Post".
+#
+# Reproduces the attacker-side half of the reported scenario without a PR:
+# a workflow whose `name` matches the watched workflow completes and uploads
+# an artifact named `mu-qemu-pr-metadata`. Nothing here touches the post
+# workflow or its inputs; it only provides the triggering run.
+##
+name: Mu QEMU PR Validation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  craft:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Craft PR metadata artifact
+        shell: bash
+        run: |
+          mkdir -p metadata
+          cat > metadata/pr-metadata.json <<'EOF'
+          {
+            "pr_number": 1,
+            "skipped": false,
+            "skip_reason": "",
+            "head_sha": "0000000000000000000000000000000000000000",
+            "caller_ref": "baseline",
+            "caller_repo_name": "mu_basecore",
+            "mu_tiano_platforms_sha": "0000000000000000000000000000000000000000",
+            "validation": { "failed": false },
+            "platforms": {}
+          }
+          EOF
+
+      - name: Upload PR Metadata
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mu-qemu-pr-metadata
+          path: metadata/pr-metadata.json
